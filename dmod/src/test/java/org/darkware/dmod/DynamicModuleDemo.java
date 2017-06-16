@@ -58,6 +58,9 @@ public class DynamicModuleDemo
                                                                .filter(file -> file.getFileName().toString().endsWith(".jar"))
                                                                .findFirst();
 
+                    // If we found one, note it and short circuit to let the condition pull us
+                    // out of the loop. A break would work too, but... conditional exit just
+                    // feels less dirty.
                     if (potentialJar.isPresent())
                     {
                         moduleJar = potentialJar.get();
@@ -86,14 +89,11 @@ public class DynamicModuleDemo
             final AtomicBoolean run = new AtomicBoolean(true);
             while (run.get())
             {
-                Optional<Calculator> instance = mod.getInstance(Calculator.class, "Example");
+                Calculator instance = mod.getInstance(Calculator.class, "Example");
 
-                if (instance.isPresent())
-                {
-                    log.info("Module calculation: 42={}, 1337={} ({})",
-                             instance.get().calculate(42), instance.get().calculate(1337),
-                             instance.get().getVersion());
-                }
+                log.info("Module calculation: 42={}, 1337={} ({})",
+                         instance.calculate(42), instance.calculate(1337),
+                         instance.getVersion());
 
                 try
                 {

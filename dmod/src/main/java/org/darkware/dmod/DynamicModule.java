@@ -26,8 +26,14 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * A {@link DynamicModule} represents an interface to one or more classes that are loaded from a
@@ -40,15 +46,20 @@ import java.util.Optional;
  */
 public class DynamicModule
 {
+    protected static final DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmssSSS")
+            .withZone(ZoneId.systemDefault());
+
     private final Logger log = LoggerFactory.getLogger("DynamicModule");
     private final Path moduleJarFile;
     private final Map<String, Object> instances;
     private final Map<String, String> aliases;
+    private final Lock mutationLock;
 
     private DynamicClassLoader classLoader;
 
     private FileTime jarFileModified;
     private long jarFileSize;
+    private String version;
 
     /**
      * Create a new {@link DynamicModule} backed by the supplied
@@ -59,24 +70,26 @@ public class DynamicModule
         super();
 
         this.moduleJarFile = moduleJarFile;
+        this.mutationLock = new ReentrantLock();
         this.instances = Maps.newConcurrentMap();
         this.aliases = Maps.newConcurrentMap();
 
-        this.loadJarFileMeta();
-
-        this.classLoader = new DynamicClassLoader(moduleJarFile);
+        this.load();
     }
 
     /**
      * Load metadata about the backing Jar file.  This is used to detect differences in the file which
      * may warrant reloading the file.
      */
-    protected void loadJarFileMeta()
+    protected final void loadJarFileMeta()
     {
         try
         {
             this.jarFileModified = Files.getLastModifiedTime(this.moduleJarFile);
             this.jarFileSize = Files.size(this.moduleJarFile);
+            this.version = String.format("v%s_%08d",
+                                         DynamicModule.dateFormatter.format(this.jarFileModified.toInstant()),
+                                         this.jarFileSize);
         }
         catch (IOException e)
         {
@@ -86,52 +99,75 @@ public class DynamicModule
     }
 
     /**
+     * Fetch a symbolic version identifier for the currently loaded Jar file data.
+     * <p>
+     * While this can be used for comparison to detect file changes, the actual checks are performed on
+     * the raw sources of data used to generate the version name. The primary purpose of this field is to
+     * provide a version identifier that is easily sortable and human-digestible.
+     *
+     * @return A symbolic version for the currently loaded module data.
+     */
+    public final String getVersion()
+    {
+        return this.version;
+    }
+
+    /**
      * Check to see if the backing Jar file appears to have changed.
      *
      * @return {@code true} if the file appears to have changed, otherwise {@code false}.
      */
     public boolean fileChanged()
     {
-        synchronized (this.moduleJarFile)
+        this.mutationLock.lock();
+        try
         {
-            try
+            if (Files.exists(this.moduleJarFile))
             {
-                if (Files.exists(this.moduleJarFile))
+                if (this.jarFileSize != Files.size(this.moduleJarFile)
+                    || !this.jarFileModified.equals(Files.getLastModifiedTime(this.moduleJarFile)))
                 {
-                    if (this.jarFileSize != Files.size(this.moduleJarFile)
-                        || !this.jarFileModified.equals(Files.getLastModifiedTime(this.moduleJarFile)))
-                    {
-                        this.log.debug("Jar file change detected.");
-                        return true;
-                    }
-                }
-                else
-                {
-                    this.log.debug("File no longer exists.");
+                    this.log.debug("Jar file change detected.");
                     return true;
                 }
             }
-            catch (IOException e)
+            else
             {
-                this.log.warn("Error while checking plugin jar file for changes.", e);
+                this.log.debug("File no longer exists.");
+                return true;
             }
+        }
+        catch (IOException e)
+        {
+            this.log.warn("Error while checking plugin jar file for changes.", e);
+        }
+        finally
+        {
+            this.mutationLock.unlock();
         }
 
         return false;
     }
 
     /**
-     * Reload the Jar file and clear the cache of Class definitions and instances. Any defined
+     * Load the Jar file and clear the cache of Class definitions and instances. Any defined
      * aliases will be retained.
      */
-    protected void reload()
+    protected void load()
     {
-        synchronized (this.moduleJarFile)
+        try
         {
-            this.log.debug("Reloading DynamicModule @ {}.", this.moduleJarFile);
+            this.mutationLock.lock();
+
+            this.log.debug("Reloading DynamicModule: {}", this.moduleJarFile);
             this.instances.clear();
             this.classLoader = new DynamicClassLoader(this.moduleJarFile);
             this.loadJarFileMeta();
+            this.log.debug("Loaded module version: {}.", this.getVersion());
+        }
+        finally
+        {
+            this.mutationLock.unlock();
         }
     }
 
@@ -149,13 +185,53 @@ public class DynamicModule
      */
     public Class<?> getModuleClass(final String classNameOrAlias) throws ClassNotFoundException
     {
-        synchronized (this.moduleJarFile)
+        this.mutationLock.lock();
+        try
         {
             if (this.fileChanged())
             {
-                this.reload();
+                this.load();
             }
-            return this.classLoader.loadClass(classNameOrAlias);
+            return this.classLoader.loadClass(this.resolveAlias(classNameOrAlias).orElse(classNameOrAlias));
+        }
+        finally
+        {
+            this.mutationLock.unlock();
+        }
+    }
+
+    /**
+     * Check to see if the given class is available through this {@link DynamicModule}. This will check for
+     * class availability without raising a {@link ClassCastException}.
+     * <p>
+     * <em>Note:</em> This only checks for availability strictly within the classes sourced from the
+     * {@link DynamicModule}. The module's integrated {@link ClassLoader} is capable of resolving classes
+     * outside the attached Jar, but this method won't check for any of those classes. This is designed
+     * specifically to check if a given class is supported by the module, not the bootstrap or system
+     * {@link ClassLoader}s.
+     * <p>
+     * <em>Another Note:</em> The result of this method should not be taken as a contract to guarantee that
+     * a given class can be instantiated from the module. Instantiation requires extra checks which are not taken
+     * into account here.
+     *
+     * @param classNameOrAlias A class name or alias to a class name.
+     * @return {@code true} if the given class can be loaded from the {@link DynamicModule}, {@code false} if the
+     * class is not recognized by the module, or if the first available definition comes from an ancestor
+     * {@link ClassLoader}.
+     */
+    public boolean hasClass(final String classNameOrAlias) {
+        this.mutationLock.lock();
+        try
+        {
+            if (this.fileChanged())
+            {
+                this.load();
+            }
+            return this.classLoader.hasClass(this.resolveAlias(classNameOrAlias).orElse(classNameOrAlias));
+        }
+        finally
+        {
+            this.mutationLock.unlock();
         }
     }
 
@@ -198,17 +274,22 @@ public class DynamicModule
         catch (InstantiationException e)
         {
             this.log.error("Failed to create module instance.", e);
-            return null;
+            throw new DynamicModuleException("Failed to create module class instance.", e);
         }
         catch (IllegalAccessException e)
         {
             this.log.error("Unable to create module instance.", e);
-            return null;
+            throw new DynamicModuleException("Not allowed to create module class instance.", e);
         }
         catch (ClassNotFoundException e)
         {
             this.log.error("Module class not found.", e);
-            return null;
+            throw new DynamicModuleException("Module instance class could not be found.", e);
+        }
+        catch (Exception e)
+        {
+            this.log.error("Exception encountered while creating dynamic instance.", e);
+            throw new DynamicModuleException("Runtime exception while creating dynamic instance.", e);
         }
     }
 
@@ -222,28 +303,31 @@ public class DynamicModule
      * @return An {@link Optional} containing the instance of the requested class, or nothing if the
      * class was not found or could not be created.
      */
-    public <T> Optional<T> getInstance(final Class<T> instanceClass, final String classNameOrAlias)
+    public <T> T getInstance(final Class<T> instanceClass, final String classNameOrAlias)
     {
-        synchronized (this.moduleJarFile)
+        try
         {
             if (this.fileChanged())
             {
-                this.reload();
+                this.load();
             }
 
+            this.mutationLock.lock();
             final String className = this.resolveAlias(classNameOrAlias).orElse(classNameOrAlias);
             this.instances.computeIfAbsent(className, this::createInstance);
 
-            try
+            Object instance = this.instances.get(className);
+            if (!instanceClass.isInstance(instance))
             {
-                return Optional.ofNullable((T) this.instances.get(className));
+                throw new ClassCastException("Cannot cast instance of " + instance.getClass() + " to type " + instanceClass.getName());
             }
-            catch (ClassCastException cce)
-            {
-                this.log.error("Requested incompatible type ({}) for retrieval. Actual type is {}",
-                               instanceClass.getSimpleName(), this.instances.get(className).getClass().getSimpleName());
-                return Optional.empty();
-            }
+            return (T) instance;
+        }
+        finally
+        {
+            this.mutationLock.unlock();
         }
     }
+
+    //TODO Class searching
 }

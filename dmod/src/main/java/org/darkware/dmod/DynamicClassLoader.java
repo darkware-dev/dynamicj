@@ -39,7 +39,7 @@ import java.util.jar.JarFile;
  * @author jeff@darkware.org
  * @since 2017-05-31
  */
-public class DynamicClassLoader extends ClassLoader
+class DynamicClassLoader extends ClassLoader
 {
     /**
      * Convert a resource path into the canonical class name expected for that resource path.
@@ -101,6 +101,18 @@ public class DynamicClassLoader extends ClassLoader
                 this.log.error("Error while indexing plugin jar file.", e);
             }
         }
+    }
+
+    /**
+     * Check to see if the given class is included in the currently loaded Jar file.
+     *
+     * @param className The fully qualified class name.
+     * @return {@code true} if the class can be loaded from the current Jar file version, {@code false} if
+     * it was not found in the Jar file.
+     */
+    public boolean hasClass(final String className)
+    {
+        return this.jarIndex.containsKey(className);
     }
 
     @Override

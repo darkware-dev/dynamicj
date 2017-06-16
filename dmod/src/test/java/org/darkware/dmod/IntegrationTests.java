@@ -68,7 +68,7 @@ public class IntegrationTests
         // We should see a changed file now
         assertThat(manager.fileChanged()).isTrue();
 
-        // Have the manager reload the file
+        // Have the manager load the file
         Callable<String> o2 = (Callable<String>)manager.getClass().newInstance();
 
         String output2 = o2.call();
