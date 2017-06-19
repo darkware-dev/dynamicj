@@ -33,6 +33,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
@@ -57,8 +58,6 @@ public class DynamicModuleTests
         DynamicModuleTests.tempJar = Files.createTempFile("DynamicModuleTest-", ".jar");
         DynamicModuleTests.log.debug("Using temp Jar file: {}", DynamicModuleTests.tempJar);
         ShutdownHandler.getCurrent().doom(tempJar);
-
-
     }
 
     private DynamicModule module;
@@ -102,47 +101,32 @@ public class DynamicModuleTests
     {
         assertThatThrownBy(() ->
                            {
-                               Collection<String> instance = this.module.getInstance(Collection.class, SampleCallable.class.getName());
+                               this.module.getInstance(Collection.class, SampleCallable.class.getName());
                            }).isInstanceOf(ClassCastException.class);
     }
 
     @Test
     public void instance_antiSocial()
     {
-        assertThatThrownBy(() ->
-                           {
-                               Object instance = this.module.getInstance(Object.class,SampleAntiSocialClass.class.getName());
-                           }).isInstanceOf(DynamicModuleException.class);
+        assertThatThrownBy(() -> this.module.getInstance(Object.class,SampleAntiSocialClass.class.getName())).isInstanceOf(DynamicModuleException.class);
     }
 
     @Test
     public void instance_instantiationKiller()
     {
-        assertThatThrownBy(() ->
-                           {
-                               Collection<String> instance = this.module.getInstance(Collection.class, SampleInstantiationKiller.class.getName());
-                           }).isInstanceOf(DynamicModuleException.class)
-                             .hasCauseInstanceOf(InstantiationException.class);
+        assertThatThrownBy(() -> this.module.getInstance(Collection.class, SampleInstantiationKiller.class.getName())).isInstanceOf(DynamicModuleException.class).hasCauseInstanceOf(NoSuchMethodException.class);
     }
 
     @Test
     public void instance_uncheckedInstantiationKiller()
     {
-        assertThatThrownBy(() ->
-                           {
-                               Collection<String> instance = this.module.getInstance(Collection.class, SampleUncheckedInstantiationKiller.class.getName());
-                           }).isInstanceOf(DynamicModuleException.class)
-                             .hasCauseInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> this.module.getInstance(Collection.class, SampleUncheckedInstantiationKiller.class.getName())).isInstanceOf(DynamicModuleException.class).hasCauseInstanceOf(InvocationTargetException.class);
     }
 
     @Test
     public void instance_noClass()
     {
-        assertThatThrownBy(() ->
-                           {
-                               Collection<String> instance = this.module.getInstance(Collection.class, SampleCallable.class.getPackage().getName() + ".NonexistentClass");
-                           }).isInstanceOf(DynamicModuleException.class)
-                             .hasCauseInstanceOf(ClassNotFoundException.class);
+        assertThatThrownBy(() -> this.module.getInstance(Collection.class, SampleCallable.class.getPackage().getName() + ".NonexistentClass")).isInstanceOf(DynamicModuleException.class).hasCauseInstanceOf(ClassNotFoundException.class);
     }
 
     @Test

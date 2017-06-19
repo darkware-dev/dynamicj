@@ -39,4 +39,13 @@ public class DynamicClassLoaderTests
     {
         assertThat(DynamicClassLoader.classNameForJarPath("Sample.class")).isEqualTo("Sample");
     }
+
+    @Test
+    public void isAssignableFrom()
+    {
+        Class<?> parentClass = CharSequence.class;
+        Class<?> childClass = String.class;
+
+        assertThat(parentClass.isAssignableFrom(childClass)).isTrue();
+    }
 }

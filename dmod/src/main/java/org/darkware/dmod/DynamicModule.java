@@ -23,6 +23,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
@@ -269,7 +271,33 @@ public class DynamicModule
         try
         {
             this.log.info("Creating new dynamic instance for {}", className);
-            return this.getModuleClass(className).newInstance();
+            Constructor con = this.getModuleClass(className).getConstructor(new Class<?>[] {});
+            return this.createInstance(con);
+        }
+        catch (ClassNotFoundException e)
+        {
+            this.log.error("Module class not found.", e);
+            throw new DynamicModuleException("Module instance class could not be found.", e);
+        }
+        catch (NoSuchMethodException e)
+        {
+            this.log.error("Module class does not support default construction.", e);
+            throw new DynamicModuleException("Module class does not support default construction.", e);
+        }
+    }
+
+    /**
+     * Create a new instance of the declared class with the supplied arguments.
+     *
+     * @param constructor The {@link Constructor} to use when creating the object.
+     * @param args The arguments to use when creating the instance.
+     * @return The created instance.
+     */
+    protected Object createInstance(final Constructor constructor, Object ... args)
+    {
+        try
+        {
+            return constructor.newInstance(args);
         }
         catch (InstantiationException e)
         {
@@ -281,15 +309,10 @@ public class DynamicModule
             this.log.error("Unable to create module instance.", e);
             throw new DynamicModuleException("Not allowed to create module class instance.", e);
         }
-        catch (ClassNotFoundException e)
+        catch (InvocationTargetException e)
         {
-            this.log.error("Module class not found.", e);
-            throw new DynamicModuleException("Module instance class could not be found.", e);
-        }
-        catch (Exception e)
-        {
-            this.log.error("Exception encountered while creating dynamic instance.", e);
-            throw new DynamicModuleException("Runtime exception while creating dynamic instance.", e);
+            this.log.error("Error while creating module instance.", e);
+            throw new DynamicModuleException("Error while creating module instance.", e);
         }
     }
 

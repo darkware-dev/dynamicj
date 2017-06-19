@@ -27,8 +27,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.stream.Collectors;
 
 /**
  * A {@link DynamicClassLoader} is a specialized child ClassLoader which resolves classes from a
@@ -65,12 +68,23 @@ class DynamicClassLoader extends ClassLoader
      */
     public DynamicClassLoader(final Path jarFile)
     {
+        this(jarFile, Thread.currentThread().getContextClassLoader());
+    }
+
+    /**
+     * Create a new {@link DynamicClassLoader} which loads classes from a given Jar file.
+     *
+     * @param jarFile A {@link Path} to a Jar file.
+     * @param classLoader The parent {@link ClassLoader} to use for resolving classes outside
+     * the provided Jar file.
+     */
+    public DynamicClassLoader(final Path jarFile, final ClassLoader classLoader)
+    {
         super(Thread.currentThread().getContextClassLoader());
 
-        this.parent = Thread.currentThread().getContextClassLoader();
+        this.parent = classLoader;
         this.jarFile = jarFile;
         this.jarIndex = Maps.newConcurrentMap();
-
         this.rebuildIndex();
     }
 
@@ -113,6 +127,70 @@ class DynamicClassLoader extends ClassLoader
     public boolean hasClass(final String className)
     {
         return this.jarIndex.containsKey(className);
+    }
+
+    /**
+     * Find all the classes in the Jar file which extend or implement the supplied {@link Class}.
+     *
+     * @param parentClass The parent {@link Class} to scan for.
+     * @return A {@link Set} of {@link Class}es wh ich extend or implement the parent class.
+     */
+    public Set<Class<?>> findSubClasses(final Class<?> parentClass) {
+        return this.jarIndex.values().stream()
+                            .map(e -> this.getConcreteClass(e.getName()))
+                            .filter(Optional::isPresent)
+                            .map(Optional::get)
+                            .filter(c -> parentClass.isAssignableFrom(c))
+                            .collect(Collectors.toSet());
+    }
+
+    /**
+     * Fetch a concrete {@link Class} object for the given class name. This is primarily useful in converting
+     * the possibility of a {@link ClassNotFoundException} into an empty {@link Optional}. This will delegate
+     * to the parent {@link ClassLoader} where needed.
+     *
+     * @param className The name of the class to fetch.
+     * @return An {@link Optional} containing the {@link Class}, if one can be fetched.
+     */
+    protected Optional<Class<?>> getConcreteClass(final String className) {
+        try
+        {
+            return Optional.ofNullable(this.findClass(className));
+        }
+        catch (ClassNotFoundException e)
+        {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Load {@link Class} object from the attached Jar file which is a unique subclass of the
+     * given class.
+     * <p>
+     * <em>Performance Note:</em> In order to check for class ancestry, each class must be loaded. This
+     * will be slow
+     *
+     * @param parentClass The parent class to compare with when scanning Jar contents.
+     * @return A {@link Class} object which extends or implements the supplied {@link Class}.
+     * @throws ClassNotFoundException If no matching classes were found in the Jar file.
+     * @throws IllegalArgumentException If multiple matching classes were found.
+     */
+    public Class<?> loadClass(final Class<?> parentClass) throws ClassNotFoundException
+    {
+        Set<Class<?>> matches = this.findSubClasses(parentClass);
+
+        if (matches.size() < 1)
+        {
+            throw new ClassNotFoundException("Found no classes extending " + parentClass.getName());
+        }
+        else if (matches.size() > 1)
+        {
+            throw new IllegalArgumentException("Multiple class matches extending " + parentClass.getName());
+        }
+        else
+        {
+            return matches.iterator().next();
+        }
     }
 
     @Override
