@@ -39,3 +39,5 @@ buildNumber.properties
 !.idea/copyright
 !.idea/scopes/Code.xml
 
+## Demo exceptions
+!dmod/dmod-example/src/test/resources/examples/**/*.jar
