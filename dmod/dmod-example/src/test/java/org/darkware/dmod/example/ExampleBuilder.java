@@ -18,29 +18,38 @@
 
 package org.darkware.dmod.example;
 
-import org.darkware.dmod.Calculator;
+import org.darkware.jvmtools.JarBuilder;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Scanner;
 
 /**
  * @author jeff@darkware.org
- * @since 2017-06-13
+ * @since 2017-06-18
  */
-public class Example implements Calculator
+public class ExampleBuilder
 {
-    @Override
-    public String getVersion()
+    public static void main(final String ... args)
     {
-        return "v0.3";
-    }
+        Scanner input = new Scanner(System.in);
+        System.out.printf("Enter the path to write the jar file to: ");
+        String path = input.nextLine();
+        Path output = Paths.get(path);
 
-    @Override
-    public String getDescription()
-    {
-        return "((base + modify) x 3333) % 99";
-    }
+        JarBuilder builder = new JarBuilder();
 
-    @Override
-    public int calculate(final int base, final int modify)
-    {
-        return ((base + modify) * 3333) % 99;
+        builder.addClass(Example.class);
+
+        try
+        {
+            builder.write(Files.newOutputStream(output));
+        }
+        catch (IOException e)
+        {
+            e.printStackTrace();
+        }
     }
 }

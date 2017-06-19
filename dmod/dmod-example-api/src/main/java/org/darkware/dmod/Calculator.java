@@ -23,5 +23,6 @@ package org.darkware.dmod;/**
 public interface Calculator
 {
     String getVersion();
-    int calculate(final int base);
+    String getDescription();
+    int calculate(final int base, final int modify);
 }
